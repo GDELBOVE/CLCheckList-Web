@@ -182,7 +182,7 @@ async function synchroniser() {
     etat('À jour · ' + new Date().toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' }));
   } catch (e) {
     if (e.statut === 401 || e.message === 'auth') { deconnecter(); return; }
-    etat(navigator.onLine ? 'Synchronisation impossible, nouvel essai plus tard.' :
+    etat(navigator.onLine ? `Synchronisation impossible (${e.statut || e.name || 'erreur'} : ${String(e.message).slice(0, 160)})` :
       'Hors ligne' + (file.length ? ` · ${file.length} modification(s) à envoyer` : ''), true);
   } finally { enCours = false; }
   afficher();
