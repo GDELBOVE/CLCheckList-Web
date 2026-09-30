@@ -50,6 +50,7 @@
   form.connexion { display: grid; gap: 12px; margin-top: 24px; }
   form.connexion input { font-size: 16px; padding: 12px; border-radius: 10px; border: 1px solid var(--trait);
     background: var(--carte); color: var(--texte); }
+  footer { text-align: center; font-size: 12px; color: var(--doux); padding: 4px 0 calc(env(safe-area-inset-bottom) + 20px); }
   .vide { text-align: center; color: var(--doux); padding: 40px 0; font-style: italic; }
 </style>
 </head>
@@ -64,6 +65,7 @@
   <div class="etat" id="etat" role="status"></div>
   <div id="vue"></div>
 </main>
+<footer id="version"></footer>
 
 <script>
 'use strict';
@@ -71,6 +73,9 @@
 // par le compte utilisateur et les règles de sécurité (RLS) de la base.
 const SUPABASE_URL = 'https://khqajaihftzickvilbwy.supabase.co';
 const SUPABASE_CLE = 'sb_publishable_zuMAs2LLbax7vRSGmCNGlg_-4544CVF';
+
+// Numéro de version (AAAA.MM.JJ-HHMM) : à changer à chaque publication, ici ET dans sw.js.
+const VERSION_APP = '2026.09.30-1547';
 
 const CLE_SESSION = 'clcl.session', CLE_DONNEES = 'clcl.donnees', CLE_FILE = 'clcl.file';
 const $ = id => document.getElementById(id);
@@ -320,6 +325,7 @@ function afficherListe(vue) {
 }
 
 // ─── Démarrage ─────────────────────────────────────────────────────────────
+$('version').textContent = 'CLCheckList · version ' + VERSION_APP;
 $('retour').addEventListener('click', () => { vueListe = null; afficher(); });
 $('sync').addEventListener('click', synchroniser);
 $('deco').addEventListener('click', () => {
