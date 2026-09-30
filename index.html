@@ -1,0 +1,302 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#1278BB">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="CLCheckList">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="icon.png">
+<title>CLCheckList</title>
+<style>
+  :root {
+    --bleu: #1278BB; --jaune: #F4B213;
+    --fond: #F8F7F7; --carte: #FFFFFF; --texte: #303030; --doux: #6B6B6B;
+    --trait: #E0E5EC; --danger: #C0392B; --fait: #AAAAAA;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --fond: #151618; --carte: #202226; --texte: #ECECEC; --doux: #A0A4AA; --trait: #33363C; --fait: #6E7278; }
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { margin: 0; background: var(--fond); color: var(--texte);
+    font: 16px/1.4 -apple-system, "Segoe UI", system-ui, sans-serif; }
+  header { position: sticky; top: 0; z-index: 5; background: var(--bleu); color: #fff;
+    padding: calc(env(safe-area-inset-top) + 10px) 16px 10px; display: flex; align-items: center; gap: 10px; }
+  header h1 { flex: 1; margin: 0; font-size: 18px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  header button { background: transparent; color: #fff; border: 0; font-size: 15px; padding: 8px; min-width: 44px; min-height: 44px; }
+  main { padding: 12px 16px calc(env(safe-area-inset-bottom) + 32px); max-width: 640px; margin: 0 auto; }
+  .etat { font-size: 13px; color: var(--doux); text-align: center; padding: 6px 0 10px; min-height: 28px; }
+  .etat.erreur { color: var(--danger); }
+  .carte { background: var(--carte); border: 1px solid var(--trait); border-radius: 12px; margin-bottom: 10px; overflow: hidden; }
+  .ligne-liste { display: flex; align-items: center; justify-content: space-between; width: 100%;
+    padding: 14px 16px; font-size: 17px; background: none; border: 0; color: inherit; text-align: left; min-height: 52px; }
+  .ligne-liste small { color: var(--doux); font-size: 13px; }
+  .categorie h2 { margin: 0; padding: 12px 16px; font-size: 13px; letter-spacing: .04em; text-transform: uppercase;
+    color: var(--doux); border-bottom: 1px solid var(--trait); }
+  label.article { display: flex; align-items: center; gap: 14px; padding: 12px 16px; min-height: 52px;
+    border-bottom: 1px solid var(--trait); font-size: 17px; }
+  label.article:last-of-type { border-bottom: 0; }
+  label.article input { width: 26px; height: 26px; accent-color: var(--bleu); flex: none; }
+  label.article.fait span { color: var(--fait); text-decoration: line-through; }
+  .ajout { display: flex; gap: 8px; padding: 10px 12px; border-top: 1px solid var(--trait); }
+  .ajout input { flex: 1; min-width: 0; font-size: 16px; padding: 10px 12px; border-radius: 8px;
+    border: 1px solid var(--trait); background: var(--fond); color: var(--texte); }
+  button.bleu { background: var(--bleu); color: #fff; border: 0; border-radius: 10px; padding: 10px 16px; font-size: 16px; min-height: 44px; }
+  button.bleu:active { background: var(--jaune); }
+  .barre { display: flex; gap: 8px; margin-bottom: 12px; }
+  .barre button { flex: 1; }
+  form.connexion { display: grid; gap: 12px; margin-top: 24px; }
+  form.connexion input { font-size: 16px; padding: 12px; border-radius: 10px; border: 1px solid var(--trait);
+    background: var(--carte); color: var(--texte); }
+  .vide { text-align: center; color: var(--doux); padding: 40px 0; font-style: italic; }
+</style>
+</head>
+<body>
+<header>
+  <button id="retour" hidden aria-label="Retour">‹ Listes</button>
+  <h1 id="titre">CLCheckList</h1>
+  <button id="sync" hidden aria-label="Synchroniser">↻</button>
+  <button id="deco" hidden aria-label="Se déconnecter">⎋</button>
+</header>
+<main>
+  <div class="etat" id="etat" role="status"></div>
+  <div id="vue"></div>
+</main>
+
+<script>
+'use strict';
+// Clé publique (« publishable ») : faite pour figurer dans une page web. Les données sont protégées
+// par le compte utilisateur et les règles de sécurité (RLS) de la base.
+const SUPABASE_URL = 'https://khqajaihftzickvilbwy.supabase.co';
+const SUPABASE_CLE = 'sb_publishable_zuMAs2LLbax7vRSGmCNGlg_-4544CVF';
+
+const CLE_SESSION = 'clcl.session', CLE_DONNEES = 'clcl.donnees', CLE_FILE = 'clcl.file';
+const $ = id => document.getElementById(id);
+
+// ─── Stockage local (peut être indisponible : on continue sans) ───────────
+const stock = {
+  lire(k, defaut) { try { const v = localStorage.getItem(k); return v ? JSON.parse(v) : defaut; } catch { return defaut; } },
+  ecrire(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch { /* quota ou mode privé */ } },
+  effacer(k) { try { localStorage.removeItem(k); } catch { } }
+};
+
+let session = stock.lire(CLE_SESSION, null);
+let donnees = stock.lire(CLE_DONNEES, { listes: [], categories: [], articles: [] });
+let file = stock.lire(CLE_FILE, []);          // modifications en attente d'envoi (hors ligne)
+let vueListe = null;                           // id de la liste ouverte, ou null
+
+// ─── Outils ────────────────────────────────────────────────────────────────
+function h(tag, attrs = {}, ...enfants) {
+  const el = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs)) {
+    if (k === 'class') el.className = v;
+    else if (k.startsWith('on')) el.addEventListener(k.slice(2), v);
+    else if (v === true) el.setAttribute(k, '');
+    else if (v !== false && v != null) el.setAttribute(k, v);
+  }
+  for (const e of enfants.flat()) el.append(e instanceof Node ? e : document.createTextNode(e ?? ''));
+  return el;
+}
+function etat(msg, erreur = false) { const e = $('etat'); e.textContent = msg; e.className = 'etat' + (erreur ? ' erreur' : ''); }
+const maintenant = () => new Date().toISOString();
+const trier = (a, b) => a.numero_ordre - b.numero_ordre;
+
+// ─── Authentification ──────────────────────────────────────────────────────
+async function authentifier(corps, grant) {
+  const rep = await fetch(`${SUPABASE_URL}/auth/v1/token?grant_type=${grant}`, {
+    method: 'POST', headers: { apikey: SUPABASE_CLE, 'Content-Type': 'application/json' }, body: JSON.stringify(corps)
+  });
+  if (!rep.ok) throw Object.assign(new Error('auth'), { statut: rep.status });
+  const j = await rep.json();
+  session = { access: j.access_token, refresh: j.refresh_token, expire: Date.now() + (j.expires_in - 60) * 1000 };
+  stock.ecrire(CLE_SESSION, session);
+}
+
+async function jetonValide() {
+  if (!session) throw Object.assign(new Error('non connecté'), { statut: 401 });
+  if (Date.now() >= session.expire) await authentifier({ refresh_token: session.refresh }, 'refresh_token');
+  return session.access;
+}
+
+async function api(chemin, options = {}) {
+  const jeton = await jetonValide();
+  const rep = await fetch(`${SUPABASE_URL}/rest/v1/${chemin}`, {
+    ...options,
+    headers: { apikey: SUPABASE_CLE, Authorization: `Bearer ${jeton}`, 'Content-Type': 'application/json', ...options.headers }
+  });
+  if (!rep.ok) throw Object.assign(new Error(await rep.text()), { statut: rep.status });
+  return rep;
+}
+
+// ─── Synchronisation ───────────────────────────────────────────────────────
+async function lireTable(table) {
+  const tout = [];
+  for (let debut = 0; ; debut += 1000) {
+    const page = await (await api(`${table}?select=*&deleted=eq.false&order=id&offset=${debut}&limit=1000`)).json();
+    tout.push(...page);
+    if (page.length < 1000) return tout;
+  }
+}
+
+async function envoyerFile() {
+  while (file.length) {
+    const op = file[0];
+    try {
+      if (op.type === 'maj') {
+        // « la modification la plus récente gagne » : ignorée si le serveur a déjà une version plus récente
+        await api(`articles?id=eq.${op.id}&updated_at=lt.${encodeURIComponent(op.corps.updated_at)}`,
+          { method: 'PATCH', body: JSON.stringify(op.corps), headers: { Prefer: 'return=minimal' } });
+      } else if (op.type === 'ajout') {
+        await api('articles?on_conflict=id', { method: 'POST', body: JSON.stringify(op.ligne),
+          headers: { Prefer: 'resolution=merge-duplicates,return=minimal' } });
+      }
+    } catch (e) {
+      if (e.statut >= 400 && e.statut < 500 && e.statut !== 401) { file.shift(); stock.ecrire(CLE_FILE, file); continue; } // refusée : on l'abandonne
+      throw e;                                   // hors ligne ou session expirée : on réessaiera
+    }
+    file.shift();
+    stock.ecrire(CLE_FILE, file);
+  }
+}
+
+let enCours = false;
+async function synchroniser() {
+  if (enCours || !session) return;
+  enCours = true; etat('Synchronisation…');
+  try {
+    await envoyerFile();
+    const [listes, categories, articles] = await Promise.all(['listes', 'categories', 'articles'].map(lireTable));
+    donnees = { listes, categories, articles };
+    // Modifications faites pendant le chargement : on les remet par-dessus ce que le serveur vient d'envoyer.
+    for (const op of file) {
+      if (op.type === 'maj') {
+        const a = donnees.articles.find(x => x.id === op.id);
+        if (a) Object.assign(a, op.corps);
+      } else if (op.type === 'ajout' && !donnees.articles.some(x => x.id === op.ligne.id)) {
+        donnees.articles.push(op.ligne);
+      }
+    }
+    stock.ecrire(CLE_DONNEES, donnees);
+    etat('À jour · ' + new Date().toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' }));
+  } catch (e) {
+    if (e.statut === 401 || e.message === 'auth') { deconnecter(); return; }
+    etat(navigator.onLine ? 'Synchronisation impossible, nouvel essai plus tard.' :
+      'Hors ligne' + (file.length ? ` · ${file.length} modification(s) à envoyer` : ''), true);
+  } finally { enCours = false; }
+  afficher();
+}
+
+// ─── Actions ───────────────────────────────────────────────────────────────
+function cocher(article, valeur) {
+  article.est_coche = valeur;
+  article.updated_at = maintenant();
+  file.push({ type: 'maj', id: article.id, corps: { est_coche: valeur, updated_at: article.updated_at } });
+  stock.ecrire(CLE_FILE, file); stock.ecrire(CLE_DONNEES, donnees);
+  synchroniser();
+}
+
+function ajouterArticle(categorieId, libelle) {
+  libelle = libelle.trim();
+  if (!libelle) return;
+  const freres = donnees.articles.filter(a => a.categorie_id === categorieId);
+  const ligne = { id: crypto.randomUUID(), categorie_id: categorieId, libelle, est_coche: false,
+    numero_ordre: Math.max(0, ...freres.map(a => a.numero_ordre)) + 1, updated_at: maintenant(), deleted: false };
+  donnees.articles.push(ligne);
+  file.push({ type: 'ajout', ligne });
+  stock.ecrire(CLE_FILE, file); stock.ecrire(CLE_DONNEES, donnees);
+  afficher(); synchroniser();
+}
+
+function cocherTout(listeId, valeur) {
+  const cats = new Set(donnees.categories.filter(c => c.liste_id === listeId).map(c => c.id));
+  donnees.articles.filter(a => cats.has(a.categorie_id) && a.est_coche !== valeur).forEach(a => cocher(a, valeur));
+  afficher();
+}
+
+function deconnecter() {
+  session = null; donnees = { listes: [], categories: [], articles: [] }; file = [];
+  [CLE_SESSION, CLE_DONNEES, CLE_FILE].forEach(stock.effacer);
+  vueListe = null; etat(''); afficher();
+}
+
+// ─── Affichage ─────────────────────────────────────────────────────────────
+function afficher() {
+  const vue = $('vue'); vue.replaceChildren();
+  $('retour').hidden = !(session && vueListe);
+  $('sync').hidden = $('deco').hidden = !session;
+
+  if (!session) { $('titre').textContent = 'CLCheckList'; vue.append(formulaireConnexion()); return; }
+  if (vueListe) afficherListe(vue); else afficherListes(vue);
+}
+
+function formulaireConnexion() {
+  const email = h('input', { type: 'email', placeholder: 'E-mail', autocomplete: 'username', required: true });
+  const mdp = h('input', { type: 'password', placeholder: 'Mot de passe', autocomplete: 'current-password', required: true });
+  return h('form', { class: 'connexion', onsubmit: async ev => {
+    ev.preventDefault(); etat('Connexion…');
+    try { await authentifier({ email: email.value.trim(), password: mdp.value }, 'password'); await synchroniser(); }
+    catch (e) { etat(e.statut === 400 || e.statut === 401 || e.statut === 422 ? 'E-mail ou mot de passe incorrect.' : 'Connexion impossible.', true); }
+  } }, email, mdp, h('button', { class: 'bleu', type: 'submit' }, 'Se connecter'));
+}
+
+function afficherListes(vue) {
+  $('titre').textContent = 'Mes listes';
+  const listes = [...donnees.listes].sort((a, b) => a.intitule.localeCompare(b.intitule, 'fr'));
+  if (!listes.length) { vue.append(h('div', { class: 'vide' }, 'Aucune liste. Crée-les dans l’application Windows puis synchronise.')); return; }
+  for (const l of listes) {
+    const cats = new Set(donnees.categories.filter(c => c.liste_id === l.id).map(c => c.id));
+    const arts = donnees.articles.filter(a => cats.has(a.categorie_id));
+    const faits = arts.filter(a => a.est_coche).length;
+    vue.append(h('div', { class: 'carte' },
+      h('button', { class: 'ligne-liste', onclick: () => { vueListe = l.id; afficher(); scrollTo(0, 0); } },
+        h('span', {}, l.intitule), h('small', {}, `${faits}/${arts.length} ›`))));
+  }
+}
+
+function afficherListe(vue) {
+  const liste = donnees.listes.find(l => l.id === vueListe);
+  if (!liste) { vueListe = null; afficher(); return; }
+  $('titre').textContent = liste.intitule;
+  const cats = donnees.categories.filter(c => c.liste_id === liste.id).sort(trier);
+  const tous = donnees.articles.filter(a => cats.some(c => c.id === a.categorie_id));
+
+  vue.append(h('div', { class: 'barre' },
+    h('button', { class: 'bleu', onclick: () => cocherTout(liste.id, true) }, 'Tout cocher'),
+    h('button', { class: 'bleu', onclick: () => cocherTout(liste.id, false) }, 'Tout décocher')));
+
+  if (!cats.length) vue.append(h('div', { class: 'vide' }, 'Cette liste est vide.'));
+  for (const c of cats) {
+    const arts = donnees.articles.filter(a => a.categorie_id === c.id).sort(trier);
+    const champ = h('input', { type: 'text', placeholder: 'Ajouter un article', enterkeyhint: 'done', autocomplete: 'off' });
+    const ajout = () => { ajouterArticle(c.id, champ.value); };
+    champ.addEventListener('keydown', ev => { if (ev.key === 'Enter') ajout(); });
+    vue.append(h('section', { class: 'carte categorie' },
+      h('h2', {}, c.libelle),
+      arts.map(a => {
+        const cb = h('input', { type: 'checkbox', checked: a.est_coche });
+        const ligne = h('label', { class: 'article' + (a.est_coche ? ' fait' : '') }, cb, h('span', {}, a.libelle));
+        cb.addEventListener('change', () => { ligne.classList.toggle('fait', cb.checked); cocher(a, cb.checked); });
+        return ligne;
+      }),
+      h('div', { class: 'ajout' }, champ, h('button', { class: 'bleu', onclick: ajout }, '+'))));
+  }
+  if (tous.length === 0 && cats.length) etat('Aucun article dans cette liste.');
+}
+
+// ─── Démarrage ─────────────────────────────────────────────────────────────
+$('retour').addEventListener('click', () => { vueListe = null; afficher(); });
+$('sync').addEventListener('click', synchroniser);
+$('deco').addEventListener('click', () => {
+  if (!file.length || confirm(`${file.length} modification(s) n’ont pas encore été envoyées. Se déconnecter quand même ?`)) deconnecter();
+});
+window.addEventListener('online', synchroniser);
+document.addEventListener('visibilitychange', () => { if (!document.hidden) synchroniser(); });
+
+if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => { /* hors HTTPS : pas de mode hors ligne */ });
+afficher();
+synchroniser();
+</script>
+</body>
+</html>
