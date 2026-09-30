@@ -149,7 +149,8 @@ async function envoyerFile() {
         await api(`articles?id=eq.${op.id}&updated_at=lt.${encodeURIComponent(op.corps.updated_at)}`,
           { method: 'PATCH', body: JSON.stringify(op.corps), headers: { Prefer: 'return=minimal' } });
       } else if (op.type === 'ajout') {
-        await api('articles?on_conflict=id', { method: 'POST', body: JSON.stringify(op.ligne),
+        // op.table : listes, categories ou articles (les anciennes entrées de la file n'ont que des articles)
+        await api(`${op.table || 'articles'}?on_conflict=id`, { method: 'POST', body: JSON.stringify(op.ligne),
           headers: { Prefer: 'resolution=merge-duplicates,return=minimal' } });
       }
     } catch (e) {
@@ -174,8 +175,9 @@ async function synchroniser() {
       if (op.type === 'maj') {
         const a = donnees.articles.find(x => x.id === op.id);
         if (a) Object.assign(a, op.corps);
-      } else if (op.type === 'ajout' && !donnees.articles.some(x => x.id === op.ligne.id)) {
-        donnees.articles.push(op.ligne);
+      } else if (op.type === 'ajout') {
+        const lignes = donnees[op.table || 'articles'];
+        if (!lignes.some(x => x.id === op.ligne.id)) lignes.push(op.ligne);
       }
     }
     stock.ecrire(CLE_DONNEES, donnees);
@@ -197,16 +199,41 @@ function cocher(article, valeur) {
   synchroniser();
 }
 
+// Création : la ligne apparaît tout de suite, part au serveur dès que possible (les lignes de la file
+// partent dans l'ordre, donc une liste est toujours créée avant ses catégories, et celles-ci avant leurs articles).
+function creer(table, ligne) {
+  donnees[table].push(ligne);
+  file.push({ type: 'ajout', table, ligne });
+  stock.ecrire(CLE_FILE, file); stock.ecrire(CLE_DONNEES, donnees);
+  afficher(); synchroniser();
+}
+
+const prochainOrdre = lignes => Math.max(0, ...lignes.map(x => x.numero_ordre)) + 1;
+
+function ajouterListe(intitule) {
+  intitule = intitule.trim();
+  if (!intitule) return;
+  const t = maintenant();
+  const ligne = { id: crypto.randomUUID(), intitule, date_creation: t, updated_at: t, deleted: false };
+  vueListe = ligne.id;                           // on ouvre directement la nouvelle liste
+  creer('listes', ligne);
+  scrollTo(0, 0);
+}
+
+function ajouterCategorie(listeId, libelle) {
+  libelle = libelle.trim();
+  if (!libelle) return;
+  creer('categories', { id: crypto.randomUUID(), liste_id: listeId, libelle,
+    numero_ordre: prochainOrdre(donnees.categories.filter(c => c.liste_id === listeId)),
+    updated_at: maintenant(), deleted: false });
+}
+
 function ajouterArticle(categorieId, libelle) {
   libelle = libelle.trim();
   if (!libelle) return;
-  const freres = donnees.articles.filter(a => a.categorie_id === categorieId);
-  const ligne = { id: crypto.randomUUID(), categorie_id: categorieId, libelle, est_coche: false,
-    numero_ordre: Math.max(0, ...freres.map(a => a.numero_ordre)) + 1, updated_at: maintenant(), deleted: false };
-  donnees.articles.push(ligne);
-  file.push({ type: 'ajout', ligne });
-  stock.ecrire(CLE_FILE, file); stock.ecrire(CLE_DONNEES, donnees);
-  afficher(); synchroniser();
+  creer('articles', { id: crypto.randomUUID(), categorie_id: categorieId, libelle, est_coche: false,
+    numero_ordre: prochainOrdre(donnees.articles.filter(a => a.categorie_id === categorieId)),
+    updated_at: maintenant(), deleted: false });
 }
 
 function cocherTout(listeId, valeur) {
@@ -241,10 +268,18 @@ function formulaireConnexion() {
   } }, email, mdp, h('button', { class: 'bleu', type: 'submit' }, 'Se connecter'));
 }
 
+// Champ de saisie + bouton « + » ; validation par le bouton ou la touche Entrée.
+function formulaireAjout(placeholder, action) {
+  const champ = h('input', { type: 'text', placeholder, enterkeyhint: 'done', autocomplete: 'off', maxlength: 200 });
+  const valider = () => action(champ.value);
+  champ.addEventListener('keydown', ev => { if (ev.key === 'Enter') valider(); });
+  return h('div', { class: 'ajout' }, champ, h('button', { class: 'bleu', onclick: valider, 'aria-label': placeholder }, '+'));
+}
+
 function afficherListes(vue) {
   $('titre').textContent = 'Mes listes';
   const listes = [...donnees.listes].sort((a, b) => a.intitule.localeCompare(b.intitule, 'fr'));
-  if (!listes.length) { vue.append(h('div', { class: 'vide' }, 'Aucune liste. Crée-les dans l’application Windows puis synchronise.')); return; }
+  if (!listes.length) vue.append(h('div', { class: 'vide' }, 'Aucune liste pour l’instant. Crée la première ci-dessous.'));
   for (const l of listes) {
     const cats = new Set(donnees.categories.filter(c => c.liste_id === l.id).map(c => c.id));
     const arts = donnees.articles.filter(a => cats.has(a.categorie_id));
@@ -253,6 +288,7 @@ function afficherListes(vue) {
       h('button', { class: 'ligne-liste', onclick: () => { vueListe = l.id; afficher(); scrollTo(0, 0); } },
         h('span', {}, l.intitule), h('small', {}, `${faits}/${arts.length} ›`))));
   }
+  vue.append(h('div', { class: 'carte' }, formulaireAjout('Nouvelle liste', ajouterListe)));
 }
 
 function afficherListe(vue) {
@@ -266,12 +302,9 @@ function afficherListe(vue) {
     h('button', { class: 'bleu', onclick: () => cocherTout(liste.id, true) }, 'Tout cocher'),
     h('button', { class: 'bleu', onclick: () => cocherTout(liste.id, false) }, 'Tout décocher')));
 
-  if (!cats.length) vue.append(h('div', { class: 'vide' }, 'Cette liste est vide.'));
+  if (!cats.length) vue.append(h('div', { class: 'vide' }, 'Cette liste est vide. Ajoute une catégorie ci-dessous.'));
   for (const c of cats) {
     const arts = donnees.articles.filter(a => a.categorie_id === c.id).sort(trier);
-    const champ = h('input', { type: 'text', placeholder: 'Ajouter un article', enterkeyhint: 'done', autocomplete: 'off' });
-    const ajout = () => { ajouterArticle(c.id, champ.value); };
-    champ.addEventListener('keydown', ev => { if (ev.key === 'Enter') ajout(); });
     vue.append(h('section', { class: 'carte categorie' },
       h('h2', {}, c.libelle),
       arts.map(a => {
@@ -280,8 +313,9 @@ function afficherListe(vue) {
         cb.addEventListener('change', () => { ligne.classList.toggle('fait', cb.checked); cocher(a, cb.checked); });
         return ligne;
       }),
-      h('div', { class: 'ajout' }, champ, h('button', { class: 'bleu', onclick: ajout }, '+'))));
+      formulaireAjout('Ajouter un article', libelle => ajouterArticle(c.id, libelle))));
   }
+  vue.append(h('div', { class: 'carte' }, formulaireAjout('Nouvelle catégorie', libelle => ajouterCategorie(liste.id, libelle))));
   if (tous.length === 0 && cats.length) etat('Aucun article dans cette liste.');
 }
 

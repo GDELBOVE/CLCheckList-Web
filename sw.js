@@ -1,6 +1,6 @@
 // Service worker : met l'application en cache pour qu'elle s'ouvre sans réseau.
 // Les appels à Supabase ne sont jamais mis en cache (les données sont gérées par l'application).
-const VERSION = 'clchecklist-v1';
+const VERSION = 'clchecklist-v2';
 const FICHIERS = ['./', './index.html', './manifest.webmanifest', './icon.png'];
 
 self.addEventListener('install', e => {
